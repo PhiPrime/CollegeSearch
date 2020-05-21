@@ -1,0 +1,193 @@
+---
+title: "College Search"
+author: "PhiPrime"
+fontsize: 11pt
+output: 
+        pdf_document:
+                toc: true
+                toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# College Selection  
+The colleges that we will be evaluating are loaded into an object in the following code block. They are entered in with respect to their size in decending order. They were manually selected from **[a search](https://www.collegedata.com/en/explore-colleges/college-search/SearchByPreference/?SearchByPreference.SearchType=0&SearchByPreference.CollegeName=&SearchByPreference.City=&SearchByPreference.States=CA&SearchByPreference.States=CO&SearchByPreference.States=CT&SearchByPreference.States=DC&SearchByPreference.States=FL&SearchByPreference.States=MD&SearchByPreference.States=MA&SearchByPreference.States=NY&SearchByPreference.States=NC&SearchByPreference.States=OR&SearchByPreference.States=PA&SearchByPreference.States=RI&SearchByPreference.States=VT&SearchByPreference.States=VA&SearchByPreference.States=WA&SearchByPreference.States=WV&SearchByPreference.StudentBodySizes=&SearchByPreference.PublicPrivate=&SearchByPreference.GenderMixes=C&SearchByPreference.EntranceDifficulties=5&SearchByPreference.FreshmanSatisfaction=&SearchByPreference.GraduationRate=&SearchByPreference.CostOfAttendance=&SearchByPreference.FinancialNeedMet=&SearchByPreference.StudentDebt=&SearchByPreference.IncludeStudentsWithNeed=false&SearchByPreference.MeritAid=&SearchByPreference.IncludeClubSports=false&SearchByPreference.WomensSports=&SearchByPreference.MensSports=&SearchByPreference.BackgroundNative=&SearchByPreference.BackgroundAfricanAmerican=&SearchByPreference.BackgroundAsian=&SearchByPreference.BackgroundHispanic=&SearchByPreference.BackgroundInternational=&SearchByPreference.DisciplineIncludeAll=false&SearchByPreference.AcademicDisciplines=27.03&SearchByPreference.AcademicDisciplines=27.01&SearchByPreference.AcademicDisciplines=27.05#)** with the following queries:  
++ **State**: CA, CO, CT, DC, FL, MD, MA, NY, NC, OR, PA, RI, VT, VA, WA, WV  
++ **Gender Mix**: Coed  
++ **Entrance Difficulty**: Most Difficult  
++ **Academic Major**: Applied Mathematics, Mathematics, Statistics  
+```{r}
+colleges <- c("University of California Berkeley",
+              "Cornell University",
+              "University of Pennsylvania",
+              "Stanford University",
+              "Carnegie Mellon University",
+              "Brown University",
+              "Duke University",
+              "Yale University",
+              "Johns Hopkins University",
+              "Lehigh University",
+              "Bucknell University",
+              "Gettysburg College",
+              "Pomona College",
+              "Swarthmore College",
+              "Haverford College")
+urlExt <- gsub(" ", "-", colleges)
+```
+
+
+# Load Data  
+```{r message = FALSE}
+#Loading packages
+library(tidyverse)
+library(httr)
+library(XML)
+library(data.table)
+```
+
+All pages about colleges on *collegedata.com* have a standard base url with an extention that is the respective college's name.  
+```{r}
+baseUrl <- "https://www.collegedata.com/college/"
+urls <- sapply(urlExt, function(x){paste0(baseUrl, x)})
+#Simplify names
+names(urls) <- c("Berkeley", "Cornell", "PA Uni", "Stanford", 
+                 "Carnegie Mellon", "Brown", "Duke", "Yale", "JHU",
+                 "Lehigh", "Bucknell", "Gettysburg", "Pomona", 
+                 "Swarthmore", "Haverford")
+```
+
+
+```{r}
+getCollegeData <- function(baseurl){
+
+d <- data.frame(profile = "", numStudents = NaN, percentMale = NaN, 
+                adminRate = "", adminDeadline = "", avgGPA = NaN,
+                cost = NaN, avgClassSize = NaN, campusPopulation = NaN,
+                nearestMetropolitan = "", percentOnCampusHousing = NaN,
+                mascot = "", percentInFraternities = NaN, percentWhite = NaN,
+                city = "", zip = "", state = "", phone = "", email = "",
+                appFee = NaN, transferAdmission = "", summerCourses = NA,
+                popularDisciplines = "", 
+                fullFacultyCount = NaN, partFacultyCount = NaN, 
+                studentCount = NaN, percentPhD = NaN,
+                tutoring = NA, masters = "", doctoral = "", colors = "",
+                avgAge = NaN, campusSize = "")
+
+#Overview
+content <- content(GET(baseurl, as = "text"))
+parsed <- htmlParse(content, asText = TRUE)
+
+d$profile <- gsub("\n", "", xpathSApply(parsed, "//p", xmlValue)[64])
+d$numStudents <- as.numeric(gsub(",","",xpathSApply(
+        parsed, "//span[1]", xmlValue)[37]))
+d$percentMale <- as.numeric(gsub("[)(%]", "", 
+                           xpathSApply(parsed, "//b", xmlValue)[2])
+                      )/100
+d$adminRate <- xpathSApply(parsed, "//dd[2]", xmlValue)[1]
+d$adminDeadline <- xpathSApply(parsed, "//dd[5]", xmlValue)[1]
+d$avgGPA <- as.numeric(xpathSApply(parsed, "//dd[1]", xmlValue)[2])
+d$cost <- as.numeric(gsub("[$,]", "", xpathSApply(
+        parsed, "//dd[1]", xmlValue)[3]))
+
+getAvgClassSize <- function(parsedHtml) {
+        classData <- xpathSApply(parsedHtml, "//dd[4]", xmlValue)[4]
+        classData <- strsplit((strsplit(classData, "% of classes")[[1]][1:6]
+                  #Disregard over 100 because I likely won't
+                  #Encounter them as a transfer student
+                  ), " students: ")
+        freqs <- as.numeric(sapply(1:6, function(x){classData[[x]][2]}))/100
+        groupedMeans <- c((2+10)/2, (10+20)/2, (20+30)/2, 
+                          (30+40)/2, (40+50)/2, (50+100)/2)
+        
+        sum(freqs*groupedMeans)
+}
+d$avgClassSize <- getAvgClassSize(parsed)
+d$campusPopulation <- as.numeric(gsub(",", "", 
+                             xpathSApply(parsed, "//dd[1]", xmlValue)[5]))
+d$nearestMetropolitan <- xpathSApply(parsed, "//dd[2]", xmlValue)[5]
+d$percentOnCampusHousing <- as.numeric(gsub(" ", "", strsplit(
+        xpathSApply(parsed, "//dd[4]", xmlValue)[5],
+                               "%")[[1]][1]))/100
+d$mascot <- xpathSApply(parsed, "//dd[6]", xmlValue)[2]
+d$percentInFraternities <- as.numeric(gsub(" ", "", strsplit(
+        xpathSApply(parsed, "//dd[8]", xmlValue),
+                               "%")[[1]][1]))/100
+d$percentWhite <- as.numeric(gsub("%(.*)", "", gsub("(.*)slander", "", 
+                 xpathSApply(parsed, "//dd[1]", xmlValue)[6])))/100
+
+#Admission
+admissionTab <- "/?tab=profile-admission-tab"
+content <- content(GET(paste0(baseurl, admissionTab), as = "text"))
+parsed <- htmlParse(content, asText = TRUE)
+
+d$address <- xpathSApply(parsed, "//dd[1]", xmlValue)[2]
+csz <- strsplit(xpathSApply(parsed, "//dd[2]", xmlValue)[2], ",")
+d$city <- csz[[1]][1]
+
+sz <- strsplit(csz[[1]][2], " ")
+d$state <- sz[[1]][2]
+d$zip <- sz[[1]][3]
+
+d$phone <- xpathSApply(parsed, "//dd[3]", xmlValue)[1]
+d$email <- gsub("\n", "", xpathSApply(parsed, "//dd[5]", xmlValue)[1])
+d$appFee <- xpathSApply(parsed, "//dd[2]", xmlValue)[3]
+d$transferAdmission <- (xpathSApply(parsed, "//dd[8]", 
+                        xmlValue)[1] == "Transfer applications accepted")
+
+#Money Matters
+moneyTab <- "/?tab=profile-money-tab"
+#No additional content of interest
+#content <- content(GET(paste0(baseurl, moneyTab), as = "text"))
+#parsed <- htmlParse(content, asText = TRUE)
+
+#Academics
+academicsTab <- "/?tab=profile-academics-tab"
+content <- content(GET(paste0(baseurl, academicsTab), as = "text"))
+parsed <- htmlParse(content, asText = TRUE)
+
+d$summerCourses <- (xpathSApply(parsed, "//dd[2]", xmlValue)[1] == 
+                               "Offered")
+d$popularDisciplines <- xpathSApply(parsed, "//dd[1]", xmlValue)[2]
+d$fullFacultyCount <- as.numeric(xpathSApply(parsed, "//dd[1]", xmlValue)[4])
+d$partFacultyCount <- as.numeric(xpathSApply(parsed, "//dd[2]", xmlValue)[4])
+d$percentPhD <- as.numeric(gsub("%", "",
+                        xpathSApply(parsed, "//dd[3]", xmlValue)[4]))/100
+d$tutoring <- (xpathSApply(parsed, "//dd[2]", xmlValue)[7] == "Available")
+d$masters <- xpathSApply(parsed, "//p[1]", xmlValue)[37]
+d$doctoral <- xpathSApply(parsed, "//p[2]", xmlValue)[16]
+
+#Campus Life
+campusTab <- "/?tab=profile-campus-tab"
+content <- content(GET(paste0(baseurl, campusTab), as = "text"))
+parsed <- htmlParse(content, asText = TRUE)
+
+d$campusSize <- xpathSApply(parsed, "//dd[3]", xmlValue)[1]
+d$colors <- xpathSApply(parsed, "//dd[3]", xmlValue)[6]
+
+
+#Students
+studentsTab <- "/?tab=profile-students-tab"
+content <- content(GET(paste0(baseurl, studentsTab), as = "text"))
+parsed <- htmlParse(content, asText = TRUE)
+
+d$studentCount <- as.numeric(gsub(",", "", 
+                          xpathSApply(parsed, "//dd[2]", xmlValue)[1]))
+d$avgAge <- as.numeric(xpathSApply(parsed, "//dd[8]", xmlValue)[1])
+return(d)
+}
+```
+```{r warnings = FALSE}
+collegesData <- rbindlist(lapply(urls, getCollegeData))
+collegesData <- cbind(colleges, collegesData)
+```
+
+# Plots  
+
+
+# Consider Weights  
+
+
+# Results  
+
